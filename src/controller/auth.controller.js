@@ -2,11 +2,18 @@ const userschema = require("../model/user.schema");
 const hospitalschema = require("../model/hospital.schema");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const transporter = require("../service/mail.service");
+
 
 const registerAdminPlatform = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, seedSecret } = req.body;
+
+    if (seedSecret !== process.env.SEED_SECRET) {
+      return res.status(403).json({
+        success: false,
+        message: "Invalid seed secret"
+      });
+    }
 
     const existingPlatformAdmin = await userschema.findOne({ email });
     if (existingPlatformAdmin) {
@@ -22,6 +29,7 @@ const registerAdminPlatform = async (req, res) => {
       email,
       password: hashedPassword,
       role: "platformAdmin",
+      isActive: true,
     });
 
     await platformAdmin.save();
@@ -51,7 +59,14 @@ const registerHospital = async (req, res) => {
       whatsappNumber,
       subaccountCode,
       adminName,
-      adminEmail,
+      adminWhatsappNumber,
+      address,
+      city,
+      state,
+      country,
+      bank,
+      subscription,
+      pricing,
     } = req.body;
     const existingHospital = await hospitalschema.findOne({ whatsappNumber });
 
@@ -62,51 +77,39 @@ const registerHospital = async (req, res) => {
       });
     }
 
-    const existingAdmin = await userschema.findOne({ email: adminEmail });
+    const existingAdmin = await userschema.findOne({ whatsappNumber: adminWhatsappNumber });
     if (existingAdmin) {
       return res.status(403).json({
         success: false,
-        message: "Admin with this email already exists",
+        message: "Admin with this whatsapp number already exists",
       });
     }
 
     const hospital = new hospitalschema({
       name,
       whatsappNumber,
+      address,
+      city,
+      state,
+      country: country || "Nigeria",
       subaccountCode,
-      subscription: { active: true },
+      bank,
+      subscription: subscription || { active: true, plan: "monthly" },
+      pricing: pricing || { folderFee: 0, consultation: 0, followUp: 0 },
     });
 
     await hospital.save();
 
-    const tempPassword = Math.random().toString(36).slice(-8);
-    const hashedPassword = await bcrypt.hash(tempPassword, 10);
-    const admin = new userschema({
+    // create hospital admin
+    const hospitalAdmin = new userschema({
       name: adminName,
-      email: adminEmail,
-      password: hashedPassword,
+      whatsappNumber: adminWhatsappNumber,
       role: "hospitalAdmin",
       hospitalId: hospital._id,
+      isActive: true,
     });
-    await admin.save();
 
-    // Send email invite to hospital admin
-    let emailSent = true;
-    let emailErrorMsg = "";
-
-    try {
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: adminEmail,
-        subject: "Hospital Admin Registration",
-        text: `Hello ${adminName},\n\nYou have been registered as a hospital admin.\nYour temporary password is: ${tempPassword}\nPlease log in and change your password.\n\nThank you.`,
-      });
-    } catch (emailErr) {
-      emailSent = false;
-      emailErrorMsg =
-        "Hospital admin registered, but invite email failed to send.";
-      console.error("Email sending failed:", emailErr);
-    }
+    await hospitalAdmin.save();
 
     res.status(201).json({
       success: true,
@@ -116,18 +119,13 @@ const registerHospital = async (req, res) => {
           hospitalId: hospital._id,
         },
         admin: {
-          name: admin.name,
-          email: admin.email,
-          role: admin.role,
+          name: hospitalAdmin.name,
+          whatsappNumber: hospitalAdmin.whatsappNumber,
+          role: hospitalAdmin.role,
+          adminId: hospitalAdmin._id
         },
       },
-      message: `Hospital registered${
-        emailSent
-          ? " and admin invite sent successfully"
-          : ", but admin invite email failed to send"
-      }`,
-      emailSent,
-      ...(emailErrorMsg && { emailErrorMsg }),
+      message: "Hospital registered and admin onboarded successfully",
     });
   } catch (err) {
     console.error(err);
@@ -137,7 +135,7 @@ const registerHospital = async (req, res) => {
 
 const registerStaff = async (req, res) => {
   try {
-    const { name, staffEmail, role } = req.body;
+    const { name, role, whatsappNumber } = req.body;
     const hospitalId = req.hospitalId; // from authValidation middleware
 
     if (!["doctor", "nurse"].includes(role)) {
@@ -146,62 +144,40 @@ const registerStaff = async (req, res) => {
         .json({ success: false, message: "Role must be doctor or nurse" });
     }
 
-    const existingStaff = await userschema.findOne({ email: staffEmail });
+    const existingStaff = await userschema.findOne({ whatsappNumber, hospitalId });
     if (existingStaff) {
       return res.status(403).json({
         success: false,
-        message: "Staff with this email already exists",
+        message: "Staff with this whatsapp number already exists",
       });
     }
-
-    // Generate temporary password
-    const tempPassword = Math.random().toString(36).slice(-8);
-    console.log("Temporary password >>>>>", tempPassword);
-    const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
     const staff = new userschema({
       name,
-      email: staffEmail,
-      password: hashedPassword,
+      whatsappNumber,
       role,
       hospitalId,
+      isActive: true,
     });
 
     await staff.save();
-
-    // Send email invite
-
-    let emailSent = true;
-    let emailErrorMsg = "";
-
-    try {
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: staffEmail,
-        subject: "Hospital Platform Staff Invitation",
-        text: `Hello ${name},\n\nYou have been registered as a ${role} at your hospital.\nYour temporary password is: ${tempPassword}\nPlease log in and change your password.\n\nThank you.`,
-      });
-    } catch (emailErr) {
-      emailSent = false;
-      emailErrorMsg = "Staff registered, but invite email failed to send.";
-      console.error("Email sending failed:", emailErr);
-    }
-
+    
     res.status(201).json({
       success: true,
-      message: `${role.charAt(0).toUpperCase() + role.slice(1)} registered${
-        emailSent
-          ? " and invite sent successfully"
-          : ", but invite email failed to send"
-      }`,
-      emailSent,
-      ...(emailErrorMsg && { emailErrorMsg }),
+      message: `${role.charAt(0).toUpperCase() + role.slice(1)} registered successfully`,
+      staff: {
+        id: staff._id,
+        name: staff.name,
+        whatsappNumber: staff.whatsappNumber,
+        role: staff.role,
+      },
     });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: err.message });
   }
 };
+
 
 const login = async (req, res) => {
   const { email, password } = req.body;
@@ -238,36 +214,6 @@ const login = async (req, res) => {
   }
 };
 
-const changePassword = async (req, res) => {
-  try {
-    const { userId } = req.userData; 
-    const { oldPassword, newPassword } = req.body;
-
-    const user = await userschema.findById(userId);
-    if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const isMatch = await bcrypt.compare(oldPassword, user.password);
-    if (!isMatch) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Old password is incorrect" });
-    }
-
-    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
-    user.password = hashedNewPassword;
-    await user.save();
-
-    res
-      .status(200)
-      .json({ success: true, message: "Password changed successfully" });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
 
 module.exports = {
   registerAdminPlatform,

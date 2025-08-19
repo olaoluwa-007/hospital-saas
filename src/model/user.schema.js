@@ -7,8 +7,6 @@ const userSchema = new Schema(
       type: mongoose.Schema.ObjectId,
       ref: "hospital",
       required: true,
-      index: true,
-      unique: true,
     },
     name: {
       type: String,
@@ -20,21 +18,27 @@ const userSchema = new Schema(
       required: true,
       lowercase: true,
       trim: true,
-      unique: true,
     },
-    passwordHash: {
+    password: {
       type: String,
       required: true,
     },
     role: {
       type: String,
-      enum: ["platformAdmin", "hospitalAdmin", "doctor", "nurse"],
-      required: true,
+      enum: ["platformAdmin", "hospitalAdmin", "doctor", "nurse", "staff"],
+      default: "staff",
     },
-    active: {
+    isActive: {
       type: Boolean,
       default: true,
     },
+    lastLogin: {
+      type: Date,
+    }
   },
   { timestamps: true }
 );
+
+userSchema.index({ email: 1, whatsappNumber: 1 });
+
+module.exports = mongoose.model("user", userSchema);

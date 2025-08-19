@@ -40,7 +40,7 @@ app.get("/", (req, res) => {
 const PORT = process.env.PORT;
 connectDB(); //connect to the database;
 app.listen(PORT, () => {
-  console.log("Server is running on http//:localhost:9000");
+  console.log("Server is running on http://localhost:9000");
 });
 
 //View-where files are kept, Model-Schemas, Controller-fuctions that perform some certain tasks you've scripted them to perform
